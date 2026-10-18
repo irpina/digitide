@@ -1,21 +1,21 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* DigiMood's render: a MOOD-style two-channel pedal. core-dn1 calls it at interrupt level for every block while
+/* DigiTide's render: a two-channel pedal. core-dn1 calls it at interrupt level for every block while
  * the page is open (the pedal shell, pedal_dsp.inc, around fx_block). Two channels, each on or off:
- *   the WET CHANNEL    REVERB (a cluster of echoes that MODIFY smears into a reverb; TIME its size and decay),
- *                      DELAY (TIME, MODIFY the feedback, a looper at the top) or SLIP (the last moment played
+ *   the wet channel    REVERB (a cluster of echoes that MODIFY smears into a reverb; TIME its size and decay),
+ *                      DELAY (TIME, MODIFY the feedback, a looper at the top) or GRAB (the last moment played
  *                      back at MODIFY's speed and direction, refreshed every TIME); FREEZE holds it
- *   the MICRO-LOOPER   always listening: a ring keeps the last 15 s (at 48K); turning it on loops the last
+ *   the looper         always listening: a ring keeps the last 15 s (at 48K); turning it on loops the last
  *                      LENGTH of it, in ENV (the input holds a slice), TAPE (speed and direction, octaves) or
  *                      STRETCH (grains: time apart from pitch); OVERDUB adds the input to the loop
- * ROUTING decides what the Wet Channel hears when both are on: the input, the input and the loop, or the loop.
- * CLOCK is MOOD's sample rate: both channels run at a tick rate from 2K to 48K (the frames between ticks are
+ * ROUTING decides what the wet channel hears when both are on: the input, the input and the loop, or the loop.
+ * CLOCK is the sample rate: both channels run at a tick rate from 2K to 48K (the frames between ticks are
  * held and smoothed; a one-pole before keeps the worst of the aliasing out). Everything the channels keep is
- * counted in ticks, so a lower CLOCK makes the loops and the echoes longer, lower and darker, as the pedal's.
- * The block: the input to ticks -> the looper -> the Wet Channel (fed per ROUTING) -> the ring (what you hear,
- * while the looper listens) -> back to frames -> the mix (MIX, LEVEL BALANCE, DIRECT MICRO-LOOP, DRY KILL).
+ * counted in ticks, so a lower CLOCK makes the loops and the echoes longer, lower and darker.
+ * The block: the input to ticks -> the looper -> the wet channel (fed per ROUTING) -> the ring (what you hear,
+ * while the looper listens) -> back to frames -> the mix (MIX, BALANCE, DIRECT, DRY KILL).
  * Fixed point as the shell's; the ring and the lines hold s16 at half scale. */
 #pragma GCC optimize ("no-tree-loop-distribute-patterns")
-#include "dmood.h"
+#include "dtide.h"
 #include "tables.h"
 
 #define PD_MIX  -1                              /* the pedal does its own mix: w is the whole output */
@@ -25,7 +25,7 @@
 #define WMASK   (MD_WL_FR - 1)
 #define RVM     (MD_REV_LINE - 1)
 
-/* The MOOD MKII's MIDI chart's bands, which are also its knobs' steps */
+/* The MIDI chart's bands, which are also the knobs' steps */
 static const u8 time_band[5] = { 13, 37, 62, 85, 111 };            /* TIME (CC 14), LENGTH (CC 16): six bands */
 static const u16 time_div[6] = { 3, 6, 8, 12, 18, 24 };            /* 1/32 1/16 1/8T 1/8 1/8D 1/4, quarters x 24 */
 static const u16 len_div[6] = { 6, 12, 24, 48, 96, 192 };          /* x/32 .. x1, x two bars */
@@ -82,7 +82,7 @@ static u32 len_ticks(void);
 static int lon;                                 /* the looper plays (its latch, as the render took it) */
 static u32 cap;                                 /* the loop's length, ticks */
 
-static u32 wet_time(int slip)                   /* TIME, in ticks: a division of the tempo, the knob's own time, or
+static u32 wet_time(int grab)                   /* TIME, in ticks: a division of the tempo, the knob's own time, or
                                                    (SYNC WET) a part of the loop */
 {
     int b = band(sk[K_TIME] >> 8, time_band, 5);
@@ -92,11 +92,11 @@ static u32 wet_time(int slip)                   /* TIME, in ticks: a division of
     else if (qfr)
         t = qfr * time_div[b] / 24u;
     else
-        t = slip ? expk(1200, sk[K_TIME], 1280) : expk(960, sk[K_TIME], 1512);
+        t = grab ? expk(1200, sk[K_TIME], 1280) : expk(960, sk[K_TIME], 1512);
     if (t < 64)
         t = 64;
-    if (t > (slip ? 40000u : MD_WL_FR - 256))
-        t = slip ? 40000u : MD_WL_FR - 256;
+    if (t > (grab ? 40000u : MD_WL_FR - 256))
+        t = grab ? 40000u : MD_WL_FR - 256;
     return t;
 }
 
@@ -395,8 +395,8 @@ static __attribute__((noinline)) void looper(const s32 *xi, s32 *lo, int nt, int
     }
 }
 
-/* ---- the Wet Channel ----------------------------------------------------------------------------------- */
-/* REVERB: MOOD's "multi-tap ambience", here an eight-line feedback delay network (DigiChroma's SPACE) whose
+/* ---- the wet channel ----------------------------------------------------------------------------------- */
+/* REVERB: an eight-line feedback delay network (DigiPrism's SPACE) whose
  * input allpasses MODIFY turns from nothing (a cluster of echoes, as a multi-tap delay) to dense (a reverb);
  * TIME sets the lines' size and their feedback together. L's input into the even lines, R's into the odd. */
 static const u16 rv_base8[8] = { 1571, 1861, 2039, 2237, 2473, 2671, 2927, 3163 };
@@ -531,8 +531,8 @@ static __attribute__((noinline)) void delay(s32 *io, int nt, int frz, int spr)
     dl_w = w, dl_xg = xg, dl_l = pl, dl_r = pr;
 }
 
-/* SLIP: MOOD's auto-sampler. The input goes on the line; a head plays it back at MODIFY's speed (the middle 1x,
- * right faster in semitones to 2x, left backwards, faster to 2x), and every TIME it slips back to the present,
+/* GRAB: an auto-sampler. The input goes on the line; a head plays it back at MODIFY's speed (the middle 1x,
+ * right faster in semitones to 2x, left backwards, faster to 2x), and every TIME it grabs back to the present,
  * the old head fading out. Frozen, the line stops and the heads repeat the same moment: a tone. */
 static u32 sl_w, sl_cnt, sl_pan;
 static s32 sl_h8, sl_o8, sl_xg;
@@ -544,7 +544,7 @@ static inline s32 rdq(const s16 *L, u32 p8, int c)     /* the line at p8 (Q8 tic
     return (x0 + (((L[2 * b + c] - x0) * f) >> 8)) << 1;
 }
 
-static __attribute__((noinline)) void slip(s32 *io, int nt, int frz, int spr)
+static __attribute__((noinline)) void grab(s32 *io, int nt, int frz, int spr)
 {
     s16 *L = MD_WLINE;
     u32 T = wet_time(1), w = sl_w, cnt = sl_cnt, pp = sl_pan, pinc = 0x7fffffffu / T;
@@ -649,7 +649,7 @@ static void fx_block(s32 *w, const s32 *x, int mode)
     ST.val[V_RATE] = (rate * 375u) >> 9;
     ST.flag[F_CLK] = (u8)clk_step;
     ST.flag[F_WET] = (u8)(won ? 1 + frz : 0);
-    ST.val[V_TIME] = wet_time(wm == WET_SLIP);
+    ST.val[V_TIME] = wet_time(wm == WET_GRAB);
 
     /* the input to ticks: at 48K every frame; below, a one-pole first, and a tick when the phase wraps */
     if (full) {
@@ -691,7 +691,7 @@ static void fx_block(s32 *w, const s32 *x, int mode)
 
     looper(xi, lo, nt, mode);
 
-    /* the Wet Channel's input, per ROUTING when both play, faded in and out */
+    /* the wet channel's input, per ROUTING when both play, faded in and out */
     {
         int rt = lon ? ST.opt[O_ROUT] : R_IN;
         s32 g = wig, gt = won && mode == PD_RUN ? 4096 : 0;
@@ -715,8 +715,8 @@ static void fx_block(s32 *w, const s32 *x, int mode)
     else if (wm == WET_DLY)
         delay(we, nt, frz, spw);
     else
-        slip(we, nt, frz, spw);
-    if (spw) {                                  /* STEREO WIDTH, with SPREAD on the wet: 0 .. 2x its sides */
+        grab(we, nt, frz, spw);
+    if (spw) {                                  /* WIDTH, with SPREAD on the wet: 0 .. 2x its sides */
         s32 wd = ss[S_WIDTH] >> 6;              /* 256: 1x */
         for (t = 0; t < 2 * nt; t += 2) {
             s32 m = (we[t] + we[t + 1]) >> 1, s = (((we[t] - we[t + 1]) >> 1) * wd) >> 8;
@@ -725,7 +725,7 @@ static void fx_block(s32 *w, const s32 *x, int mode)
         }
     }
 
-    /* the ring, while the looper listens: what the pedal plays (the input, and the Wet Channel as MIX has it) */
+    /* the ring, while the looper listens: what the pedal plays (the input, and the wet channel as MIX has it) */
     if (!lon) {
         s16 *W = MD_RING;
         u32 k = rw;

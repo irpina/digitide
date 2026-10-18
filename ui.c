@@ -1,35 +1,35 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* DigiMood's UI, on the pedal shell (pedal_ui.inc: the pages, SETUP, presets, TAP, BYPASS, the owner):
+/* DigiTide's UI, on the pedal shell (pedal_ui.inc: the pages, SETUP, presets, TAP, BYPASS, the owner):
  *
- *   1 MOOD      TIME MIX LENGTH BALANCE / MODIFY (wet) CLOCK MODIFY (looper) TONE   (as the pedal: the wet side
- *               left, the shared knobs in the middle, the looper's right; BALANCE and TONE from its hidden options)
- *   2 HIDDEN    WIDTH FADE DIRECT OUT / WOBL DAMP XFAD RAMP
- *   3 TOGGLES   WET (REVERB, DELAY, SLIP) LOOP (ENV, TAPE, STRETCH) ROUTING (IN, ML+IN, ML) SYNC (OFF, LOOP to
+ *   1 TIDE      TIME MIX LENGTH BALANCE / MODIFY (wet) CLOCK MODIFY (looper) TONE   (the wet side left, the
+ *               shared knobs in the middle, the looper's right)
+ *   2 EXTRAS    WIDTH FADE DIRECT OUT / WOBL DAMP XFAD RAMP
+ *   3 TOGGLES   WET (REVERB, DELAY, GRAB) LOOP (ENV, TAPE, STRETCH) ROUTING (IN, ML+IN, ML) SYNC (OFF, LOOP to
  *               the wet, WET to the loop) / SPREAD (OFF, BOTH, WET, LOOP) LATCH DRY KILL NO DUB
- *   T1 the Wet Channel: tap on/off, hold FREEZE      T2 the Micro-Looper: tap on/off, hold OVERDUB
+ *   T1 the wet channel: tap on/off, hold FREEZE      T2 the looper: tap on/off, hold OVERDUB
  *   T3 tap: the next wet mode, hold: the next ROUTING T4 tap: the next loop mode, hold: the next SYNC
  *   trig 1-6   TIME's six divisions;  trig 7-12  LENGTH's six;  trig 13, 14  CLOCK a step down, up
- *   MIDI: the MOOD MKII's chart (its MIDI manual): TIME 14, MIX 15, LENGTH 16, MODIFY 17, CLOCK 18, MODIFY 19,
- *   RAMP 20, WET 21, ROUTING 22, LOOP 23, WIDTH 24, FADE 26, TONE 27, BALANCE 28, DIRECT 29, SYNC 31, SPREAD SOLO
- *   32, LOOP BUFFER 33, MISO 72, SPREAD 73, DRY KILL 74, TRAILS 75, LATCH 76, NO DUB 77, SMOOTH 78, the looper on
- *   102, the wet on 103, the hidden page 104, FREEZE 105, OVERDUB 106, TAP 107 and 93 */
+ *   MIDI: TIME 14, MIX 15, LENGTH 16, MODIFY 17, CLOCK 18, MODIFY 19,
+ *   RAMP 20, WET 21, ROUTING 22, LOOP 23, WIDTH 24, FADE 26, TONE 27, BALANCE 28, DIRECT 29, SYNC 31, SPREAD's
+ *   channels 32, LOOP BUFFER 33, MONO 72, SPREAD 73, DRY KILL 74, TRAILS 75, LATCH 76, NO DUB 77, SMOOTH 78, the looper on
+ *   102, the wet on 103, the extras page 104, FREEZE 105, OVERDUB 106, TAP 107 and 93 */
 #pragma GCC optimize ("no-tree-loop-distribute-patterns")
-#include "dmood.h"
+#include "dtide.h"
 #include "tables.h"
 
 #define PD_TAG      0x444D4F44u             /* "DMOD" */
-#define PD_NAME     "DIGIMOOD"
+#define PD_NAME     "DIGITIDE"
 #define PD_SAVE_VER 1
 #define PD_KBIP     (1 << K_BAL)
 #define PD_SBIP     0
 #define PD_NCFG     2
 
-/* The Mod Menu's DIGIMOOD: a crescent moon */
+/* The Mod Menu's DIGITIDE: a crescent moon */
 static const u16 pd_icon[16] = {
     0x0000, 0x0780, 0x1f00, 0x3e00, 0x3c00, 0x7c00, 0x7c00, 0x7c00,
     0x7c00, 0x7e00, 0x7f00, 0x3f80, 0x3ffc, 0x1ff8, 0x07e0, 0x0000
 };
-static const char *const pd_title[3] = { "Mood", "Hidden", "Toggles" };
+static const char *const pd_title[3] = { "Tide", "Extras", "Toggles" };
 static const char *const pd_klbl[8] = { "TIME", "MIX", "LNGT", "BAL", "WMOD", "CLK", "LMOD", "TONE" };
 static const u8 pd_kdef[8] = PD_KDEF;
 static const char *const pd_slbl[8] = { "WDTH", "FADE", "DRCT", "OUT", "WOBL", "DAMP", "XFAD", "RAMP" };
@@ -37,7 +37,7 @@ static const u8 pd_sdef[8] = PD_SDEF;
 static const char *const pd_olbl[8] = { "WET", "LOOP", "ROUT", "SYNC", "SPRD", "LTCH", "DRYK", "NDUB" };
 static const u8 pd_onum[8] = { 3, 3, 3, 3, 4, 2, 2, 2 };
 static const u8 pd_odef[8] = PD_ODEF;
-static const char *const o_wet[3] = { "REV", "DLY", "SLIP" };
+static const char *const o_wet[3] = { "REV", "DLY", "GRAB" };
 static const char *const o_loop[3] = { "ENV", "TAPE", "STR" };
 static const char *const o_rout[3] = { "IN", "ML+I", "ML" };
 static const char *const o_sync[3] = { "OFF", "LOOP", "WET" };
@@ -71,7 +71,7 @@ static int clk_of(int v)                    /* CC 18's bands: the CLOCK step */
     return i;
 }
 
-static void fx_defaults(void)               /* a new project: the Wet Channel on, the looper listening */
+static void fx_defaults(void)               /* a new project: the wet channel on, the looper listening */
 {
     ST.sw[SW_WET] = 1;
 }
@@ -100,7 +100,7 @@ static void loop_on(int on)
 static void fx_tkey(int t, int ev)
 {
     int latch = ST.opt[O_LATCH];
-    if (t == 0) {                               /* the Wet Channel: tap on/off, hold FREEZE */
+    if (t == 0) {                               /* the wet channel: tap on/off, hold FREEZE */
         if (ev == TK_TAP) {
             wet_on(!ST.sw[SW_WET]);
         } else if (ev == TK_HOLD) {
@@ -109,7 +109,7 @@ static void fx_tkey(int t, int ev)
         } else if (ev == TK_UP && !latch) {
             ST.sw[SW_FRZ] = 0;
         }
-    } else if (t == 1) {                        /* the Micro-Looper: tap on (the last LENGTH) or off, hold OVERDUB */
+    } else if (t == 1) {                        /* the looper: tap on (the last LENGTH) or off, hold OVERDUB */
         if (ev == TK_TAP) {
             loop_on(!ST.sw[SW_LOOP]);
         } else if (ev == TK_HOLD) {
@@ -175,7 +175,7 @@ static int fx_cc(int cc, int v)
         set_ctl(0, K_BAL, v);
     } else if (cc == 31) {                      /* SYNC: left (the looper to the wet), none, right */
         set_ctl(2, O_SYNC, v < 2 ? SY_LOOP : v == 2 ? SY_OFF : SY_WET);
-    } else if (cc == 32) {                      /* SPREAD SOLO: the wet only, both, the looper only */
+    } else if (cc == 32) {                      /* SPREAD's channels: the wet only, both, the looper only */
         set_ctl(2, O_SPRD, v < 2 ? SP_WET : v == 2 ? SP_BOTH : SP_LOOP);
     } else if (cc == 33) {
         ST.cfg[C_HALF] = (u8)(v < 2);
@@ -218,7 +218,7 @@ static int fx_cc(int cc, int v)
 
 static int fx_value(void *bmp, const void *font, int x, int y, int pg, int i)
 {
-    int v = pg == 0 ? ST.knob[i] : ST.sec[i], synced = dmood_tempo() != 0;
+    int v = pg == 0 ? ST.knob[i] : ST.sec[i], synced = dtide_tempo() != 0;
     if (pg == 0 && i == K_TIME) {
         if (ST.opt[O_WET] == WET_REV)
             TEXTF(bmp, font, x, y, -1, "SIZE %d%%", v * 100 / 127);
